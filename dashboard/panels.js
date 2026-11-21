@@ -1,4 +1,4 @@
-// Token Radar panels, round 3. Renders three sections the board alone
+// Token Radar panels, round 4. Renders three sections the board alone
 // cannot show, from the same window.RADAR data main.ts writes — no
 // refitting, no second source of truth:
 //   1. Distribution: a histogram of implied values across all 342
