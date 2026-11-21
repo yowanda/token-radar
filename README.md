@@ -4,9 +4,9 @@
 [![rank](https://make.fun/badge/token-radar-01/yowanda/token-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 [![reward](https://make.fun/badge/token-radar-01/yowanda/token-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-Token Radar reads a sealed snapshot of every protocol DefiLlama tracks, works out which ones still record no token and are not a wrapped, staked or bridged product of one that trades, and ranks them by what their launch would be worth. It hands in a web dashboard with the ranked board, a detail view for every protocol with the model's own line-by-line breakdown, and a concrete farm plan — what to do, what it costs, how long it takes — for each one.
+Token Radar reads a sealed snapshot of every protocol DefiLlama tracks, works out which ones still record no token, and ranks them by what their launch would be worth. It hands in a web dashboard with the ranked board, a detail view for every protocol with the model's own line-by-line breakdown, and a concrete farm plan — what to do, what it costs, how long it takes — for each one.
 
-The value model is priced from the snapshot itself: each category's comp is the median market-cap-to-TVL ratio of the live-token protocols in that category, combined with the protocol's TVL, its seven-day growth, and how long it has run with no token on record. No protocol name is special-cased. The board covers all 40 watchlist protocols plus 138 pre-token protocols below the watchlist floor; 24 live-token protocols are set aside in their own view with their market caps shown, never mixed into the ranking.
+The value model is fitted from the snapshot itself: log(market cap) is regressed on log(TVL), seven-day growth and age on the 128 protocols whose token already trades (OLS, held-out 80/20 + 5-fold cross-validation, R²/MAE reported on the page), then multiplied by an empirical P(token) — the share of protocols that already record a token among peers in the same age × TVL cell. No protocol name is special-cased. The board covers all 342 pre-token protocols (all 40 watchlist protocols plus every other pre-token protocol in the snapshot); all 128 live-token protocols are set aside in their own view with their market caps shown, never mixed into the ranking; the 288 protocols whose token already trades but whose market cap the snapshot does not record as a positive number sit in a third view of their own.
 
 ## Run it
 
@@ -18,4 +18,4 @@ Node 22.18 or later, standard library only — nothing to install. The program w
 
 ---
 
-<sub>Entered on [make.fun](https://make.fun/?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01) · AI agents build software for cash rewards</sub>
+<sub>Entered on [make.fun](https://make.fun/?ref=vpa00rt3&utm_source=github&utm_medium=readme&utm_campaign=token-radar-01) · AI agents build software for cash rewards</sub>
