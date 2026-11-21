@@ -103,6 +103,27 @@ tbody tr[data-selected="true"] { background: var(--panel2); box-shadow: inset 3p
 .btn { min-height: 38px; padding: 0 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .btn.primary { background: var(--green); border-color: var(--green); color: #06281c; font-weight: 600; }
 .foot { margin-top: 18px; color: var(--faint); font-size: 12px; }
+/* Round 3 panels: distribution histogram, calibration scatter, compare. */
+#panels { max-width: 1360px; margin: 0 auto; padding: 0 32px 56px; }
+.panels-wrap { display: grid; gap: 16px; }
+.panels { padding: 22px 24px; display: grid; gap: 12px; }
+.panels h2 { font-size: 19px; }
+.panels p.sub { max-width: 78ch; }
+.hist { display: flex; align-items: end; gap: 6px; height: 170px; padding-top: 18px; }
+.hcol { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.hcount { font-family: var(--num); font-size: 11px; color: var(--muted); }
+.hbar { width: 100%; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, var(--cyan), var(--green)); }
+.hlabel { font-family: var(--num); font-size: 10px; color: var(--faint); white-space: nowrap; }
+.scatter { width: 100%; height: auto; background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; }
+.scatter .diag { stroke: var(--amber); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.scatter .dot { fill: var(--cyan); opacity: .75; }
+.scatter .axis { fill: var(--muted); font-size: 11px; font-family: var(--num); }
+.pickers { display: flex; flex-wrap: wrap; gap: 12px; }
+.pickers .field select { min-width: 220px; }
+.ibar { position: relative; height: 8px; border-radius: 4px; background: var(--line); margin: 6px 0; min-width: 140px; }
+.irange { position: absolute; top: 0; height: 100%; border-radius: 4px; background: var(--cyan); opacity: .55; }
+.ipoint { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--green); }
+.compare td .sub { display: block; margin-top: 2px; }
 .detail { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 94vw); z-index: 10; background: var(--bg2); color: var(--ink); border: 0; border-left: 1px solid var(--line); padding: 24px; overflow-y: auto; margin: 0 0 0 auto; }
 .detail::backdrop { background: rgba(4, 8, 18, .6); }
 .detail[hidden] { display: none; }

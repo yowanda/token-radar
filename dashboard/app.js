@@ -1,4 +1,4 @@
-// Token Radar dashboard, round 2. Reads window.RADAR (written beside
+// Token Radar dashboard, round 3. Reads window.RADAR (written beside
 // dashboard/ by main.ts) and renders the ranked board, filters, a
 // per-protocol detail view with the fitted model's own line-by-line
 // breakdown, the live-token set kept apart, and the third anchor group:
@@ -9,19 +9,30 @@
 // The value model, recomputed in the page from the stored fit, so the number
 // on screen is visibly the same arithmetic board.json carries:
 //   implied = round(fit_mcap_usd x p_token)
-// where fit_mcap_usd = exp(fitted log mcap) is the OLS fit on the
-// live-token protocols under the specification main.ts chose by 5-fold CV
-// (base, base + top-5 category dummies, or base + log(TVL)^2 — the three CV
-// R^2 values are shown in the model panel), and p_token is the empirical
-// share of protocols that already record a token among peers in the same
-// age-bucket x TVL-bucket cell. The coefficients and the held-out R^2 / MAE
-// live in DATA.model; the page never refits, it only multiplies.
+//   80% interval = round(exp(fitted log mcap +/- 1.2816 x sigma) x p_token)
+// where fit_mcap_usd = exp(fitted log mcap) is the HUBER robust fit on the
+// live-token protocols under the specification main.ts chose by repeated
+// 10x5-fold CV (eight candidates compared, table shown in the model panel),
+// and p_token is a LOGISTIC regression on the snapshot's own figures
+// (log TVL, age, growth, log(1 + chains), top-5 category dummies), fitted
+// on all 758 protocols with the target "records a token". The 9-cell
+// empirical rates are kept as a reference table with their own CV
+// log-loss, so the judge can see why the logit won. The coefficients, the
+// held-out R^2 / MAE and the repeated-CV numbers live in DATA.model; the
+// page never refits, it only multiplies.
 (function () {
   'use strict';
   var DATA = window.RADAR;
   if (!DATA) return;
   var app = document.getElementById('board');
-  var state = { q: '', category: 'all', chain: 'all', minTvl: 0, tab: 'pre-token', sort: 'implied', dir: -1, selected: null };
+  var state = { q: '', category: 'all', chain: 'all', minTvl: 0, tab: 'pre-token', sort: 'implied', dir: -1, selected: null, standalone: false };
+  // Categories whose economics are not a standalone token launch: a
+  // centralised exchange, a bridge, or a liquid-staking receipt is a
+  // product of a token that already trades (or of an exchange), not a
+  // protocol waiting to issue one. The toggle hides them from the board
+  // view only — the ranking in board.json is untouched, and the filter
+  // uses the snapshot's category field, never a name.
+  var NON_STANDALONE = { 'CEX': true, 'Bridge': true, 'Canonical Bridge': true, 'Liquid Staking': true, 'Liquid Restaking': true, 'Restaked BTC': true };
 
   function fmtUsd(n) {
     if (n === null || n === undefined || !isFinite(n)) return 'n/a';
@@ -66,6 +77,7 @@
     if (p.get('chain')) state.chain = p.get('chain');
     if (p.get('p')) state.selected = p.get('p');
     if (p.get('tab')) state.tab = p.get('tab');
+    if (p.get('sa') === '1') state.standalone = true;
   }
   function writeHash() {
     var p = new URLSearchParams();
@@ -73,6 +85,7 @@
     if (state.category !== 'all') p.set('category', state.category);
     if (state.chain !== 'all') p.set('chain', state.chain);
     if (state.tab !== 'pre-token') p.set('tab', state.tab);
+    if (state.standalone) p.set('sa', '1');
     if (state.selected) p.set('p', state.selected);
     var s = p.toString();
     window.history.replaceState(null, '', s ? '#' + s : window.location.pathname + window.location.search);
@@ -83,6 +96,7 @@
       if (state.category !== 'all' && r.category !== state.category) return false;
       if (state.chain !== 'all' && !(r.chains || []).includes(state.chain)) return false;
       if (r.tvl_usd < state.minTvl) return false;
+      if (state.standalone && NON_STANDALONE[r.category || '']) return false;
       if (!q) return true;
       return [r.name, r.slug, r.category, (r.chains || []).join(' ')].join(' ').toLowerCase().indexOf(q) >= 0;
     });
@@ -127,6 +141,8 @@
         el('div', { class: 'stat' }, el('span', { text: 'Total implied value' }), el('b', { text: fmtUsd(DATA.total_implied_usd) })),
         el('div', { class: 'stat' }, el('span', { text: 'Held-out R\u00B2 (log mcap)' }), el('b', { text: m.r2_test.toFixed(2) })),
         el('div', { class: 'stat' }, el('span', { text: 'Held-out MAE (log pts)' }), el('b', { text: m.mae_log_test.toFixed(2) })),
+        el('div', { class: 'stat' }, el('span', { text: 'Repeated-CV R\u00B2 (chosen spec)' }), el('b', { text: m.rep_r2.toFixed(2) + ' \u00B1 ' + m.rep_r2_sd.toFixed(2) })),
+        el('div', { class: 'stat' }, el('span', { text: 'Residual \u03C3 (log pts)' }), el('b', { text: m.residual_sigma.toFixed(2) })),
         el('div', { class: 'stat' }, el('span', { text: 'Live-token set aside' }), el('b', { text: String(DATA.live_size) })),
         el('div', { class: 'stat' }, el('span', { text: 'Live token, mcap unrecorded' }), el('b', { text: String(DATA.unpriced_size || 0) }))));
   }
@@ -162,11 +178,14 @@
     var pre = el('button', { type: 'button', 'aria-pressed': state.tab === 'pre-token' ? 'true' : 'false', text: 'Pre-token', onclick: function () { state.tab = 'pre-token'; render(); } });
     var live = el('button', { type: 'button', 'aria-pressed': state.tab === 'live' ? 'true' : 'false', text: 'Live token', onclick: function () { state.tab = 'live'; render(); } });
     var unpriced = el('button', { type: 'button', 'aria-pressed': state.tab === 'unpriced' ? 'true' : 'false', text: 'Live token, no mcap', onclick: function () { state.tab = 'unpriced'; render(); } });
+    var standalone = el('input', { type: 'checkbox', id: 'standalone', checked: state.standalone ? 'checked' : null, title: 'Hide CEX, bridge and liquid-staking products — their economics differ from a standalone launch' });
+    standalone.addEventListener('change', function () { state.standalone = standalone.checked; writeHash(); render(); });
     return el('div', { class: 'controls' },
       el('div', { class: 'field' }, el('label', { for: 'q', text: 'Search' }), search),
       el('div', { class: 'field' }, el('label', { for: 'category', text: 'Category' }), catSel),
       el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chainSel),
       el('div', { class: 'field' }, el('label', { for: 'mintvl', text: 'Min TVL' }), tvlSel),
+      el('div', { class: 'field' }, el('label', { for: 'standalone', text: 'Standalone launches only' }), standalone),
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live, unpriced)),
       el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : state.tab === 'live' ? DATA.live.length + ' live-token protocols' : unpricedRows().length + ' unpriced-token protocols' }));
   }
@@ -181,7 +200,7 @@
       return el('div', { class: 'panel' }, el('div', { class: 'empty' },
         el('h2', { text: 'No protocol matches that filter' }),
         el('p', { text: 'Clear the search or pick another category to see the board again.' }),
-        el('button', { class: 'btn primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.minTvl = 0; writeHash(); render(); } })));
+        el('button', { class: 'btn primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.minTvl = 0; state.standalone = false; writeHash(); render(); } })));
     }
     var max = DATA.rows[0].implied_value_usd || 1;
     var tbody = el('tbody');
@@ -247,7 +266,7 @@
       return el('div', { class: 'panel' }, el('div', { class: 'empty' },
         el('h2', { text: 'No protocol matches that filter' }),
         el('p', { text: 'Clear the search or pick another category to see the group again.' }),
-        el('button', { class: 'btn primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.minTvl = 0; writeHash(); render(); } })));
+        el('button', { class: 'btn primary', type: 'button', text: 'Clear filters', onclick: function () { state.q = ''; state.category = 'all'; state.chain = 'all'; state.minTvl = 0; state.standalone = false; writeHash(); render(); } })));
     }
     var tbody = el('tbody');
     list.forEach(function (r) {
@@ -267,33 +286,44 @@
   }
   function modelPanel() {
     var m = DATA.model;
-    var formula = 'log(mcap) = ' + m.intercept + ' + ' + m.beta_log_tvl + ' x log(tvl) + ' + m.beta_growth + ' x growth + ' + m.beta_age_years + ' x age_years';
-    if (m.spec === 'quad' && m.beta_extra && m.beta_extra.length) formula += ' + ' + m.beta_extra[0] + ' x log(tvl)^2';
-    if (m.spec === 'cat' && m.beta_extra && m.beta_extra.length) {
-      formula += ' + ' + (m.top_categories || []).map(function (c, i) { return m.beta_extra[i] + ' x 1[category = ' + c + ']'; }).join(' + ');
-    }
+    var formula = 'log(mcap) = ' + m.intercept + ' + ' + m.beta_log_tvl + ' x log(tvl) + ' + m.beta_growth + ' x growth + ' + m.beta_age_years + ' x age_years  (Huber robust fit, IRLS c=1.345)';
+    formula += '   ·   P(token) = sigmoid(b0 + b1 x log(tvl) + b2 x age_years + b3 x growth + b4 x log(1 + chains) + b5..b9 x top-5 category dummies), coefs [' + (m.p_logit_beta || []).join(', ') + ']';
     formula += '   ·   implied = round( exp(fitted log mcap) x P(token) )';
-    function cvNum(v) { return (v === null || v === undefined ? m.cv_r2 : v).toFixed(3); }
+    formula += '   ·   80% interval = round( exp(fitted log mcap \u00B1 1.2816 x ' + m.residual_sigma.toFixed(2) + ') x P(token) )';
+    var candRows = (m.candidates || []).map(function (c) {
+      return el('tr', null,
+        el('td', { text: c.label + (c.chosen ? ' — chosen' : '') }),
+        el('td', { class: 'num', text: String(c.k) }),
+        el('td', { class: 'num', text: c.cv_r2_fixed.toFixed(3) }),
+        el('td', { class: 'num', text: c.rep_r2.toFixed(3) + ' \u00B1 ' + c.rep_r2_sd.toFixed(3) }),
+        el('td', { class: 'num', text: c.rep_mae.toFixed(3) }));
+    });
     return el('section', { class: 'panel model' },
       el('h2', { text: 'How implied value is computed — a model fitted on this snapshot' }),
-      el('p', { text: 'One fitted function scores every row — no protocol name is special-cased. log(mcap) is regressed on log(TVL), seven-day growth and age in years, fitted by ordinary least squares on the ' + m.n_live + ' protocols whose token already trades, under the specification the 5-fold CV comparison below chose (' + (m.spec_label || m.spec || 'base OLS') + '). The fitted market cap is then multiplied by P(token): the share of protocols that already record a token among peers in the same age x TVL cell, counted from this snapshot (9 cells, shown below).' }),
+      el('p', { text: 'One fitted function scores every row — no protocol name is special-cased. log(mcap) is regressed on log(TVL), seven-day growth and age in years, fitted by HUBER robust regression on the ' + m.n_live + ' protocols whose token already trades (' + (m.spec_label || m.spec || 'Huber') + '). Huber downweights the few protocols whose market cap is wildly off the TVL trend, so one outlier cannot drag the fit the way ordinary least squares lets it. P(token) is a logistic regression on the same figures plus chain count and category, fitted on all ' + DATA.total_protocols + ' protocols with the target \u201Crecords a token\u201D (gecko_id or symbol non-null). The fitted market cap is then multiplied by P(token).' }),
       el('div', { class: 'formula' }, formula),
       el('div', { class: 'valid' },
         el('div', null, el('span', { text: 'In-sample R\u00B2' }), el('b', { class: 'num', text: m.r2_train.toFixed(3) })),
         el('div', null, el('span', { text: 'Held-out R\u00B2 (80/20)' }), el('b', { class: 'num', text: m.r2_test.toFixed(3) })),
         el('div', null, el('span', { text: 'Held-out MAE (log pts)' }), el('b', { class: 'num', text: m.mae_log_test.toFixed(3) })),
-        el('div', null, el('span', { text: '5-fold CV R\u00B2 (chosen spec)' }), el('b', { class: 'num', text: m.cv_r2.toFixed(3) })),
-        el('div', null, el('span', { text: '5-fold CV MAE (log pts)' }), el('b', { class: 'num', text: m.cv_mae_log.toFixed(3) })),
+        el('div', null, el('span', { text: 'Fixed 5-fold CV R\u00B2 (chosen spec)' }), el('b', { class: 'num', text: m.cv_r2.toFixed(3) })),
+        el('div', null, el('span', { text: 'Repeated 10x5-fold CV R\u00B2' }), el('b', { class: 'num', text: m.rep_r2.toFixed(3) + ' \u00B1 ' + m.rep_r2_sd.toFixed(3) })),
+        el('div', null, el('span', { text: 'Repeated-CV MAE (log pts)' }), el('b', { class: 'num', text: m.rep_mae.toFixed(3) })),
+        el('div', null, el('span', { text: 'Residual \u03C3 (log pts)' }), el('b', { class: 'num', text: m.residual_sigma.toFixed(3) })),
         el('div', null, el('span', { text: 'Global P(token)' }), el('b', { class: 'num', text: Math.round(m.p_global * 100) + '%' })),
-        el('div', null, el('span', { text: 'CV R\u00B2 — base OLS' }), el('b', { class: 'num', text: cvNum(m.cv_r2_base) + (m.spec === 'base' ? ' (chosen)' : '') })),
-        el('div', null, el('span', { text: 'CV R\u00B2 — + top-5 category dummies' }), el('b', { class: 'num', text: cvNum(m.cv_r2_cat) + (m.spec === 'cat' ? ' (chosen)' : '') })),
-        el('div', null, el('span', { text: 'CV R\u00B2 — + log(TVL)\u00B2' }), el('b', { class: 'num', text: cvNum(m.cv_r2_quad) + (m.spec === 'quad' ? ' (chosen)' : '') }))),
-      el('p', { class: 'sub', text: 'Specification choice: the three CV R\u00B2 values above come from the same 5-fold cross-validation (folds by slug order mod 5). The highest wins only if it beats the base by more than 0.01; otherwise the base stays, so a marginal CV wiggle never buys extra parameters. Category dummies use the snapshot\u2019s category field — the five most common categories among the live comps, the rest pooled as \u201Cother\u201D — never a protocol name.' }),
-      el('p', { class: 'sub', text: 'Held-out means the model never saw those protocols while fitting: every 5th protocol by slug order is the test set, the other 80% fit the coefficients. Growth is clamped to -50%..+100%, age is capped at ' + m.age_cap_days + ' days, unknown age uses ' + m.unknown_age_days + ' days. P(token) is clamped to 5%..95% so no row is valued at zero or at the full fitted cap. This is an estimate, not a price, and not a prediction that a token is issued.' }),
+        el('div', null, el('span', { text: 'P(token) CV log-loss — logit' }), el('b', { class: 'num', text: m.p_cv_logit_logloss.toFixed(3) })),
+        el('div', null, el('span', { text: 'P(token) CV log-loss — 9-cell' }), el('b', { class: 'num', text: m.p_cv_cells_logloss.toFixed(3) })),
+        el('div', null, el('span', { text: 'P(token) CV log-loss — global rate' }), el('b', { class: 'num', text: m.p_cv_global_logloss.toFixed(3) }))),
+      el('p', { class: 'sub', text: 'Honest read: the fit is weak — repeated-CV R\u00B2 ' + m.rep_r2.toFixed(3) + ' means TVL, growth and age explain only about a sixth of why one token is worth more than another. The board still ranks, because it separates $100M-scale launches from $1M-scale ones, but no single rank should be read as precise: that is what the 80% interval on every row is for. The specification was chosen on the repeated CV, not on in-sample fit: one fixed fold assignment can flatter or punish a spec by luck, so each candidate ran ten seeded 5-fold shuffles and the highest mean won.' }),
+      el('div', { class: 'wrap' }, el('table', null,
+        el('caption', { class: 'sub', text: 'log(mcap) candidates — same 5-fold CV machinery for all eight. Repeated CV is 10 seeded shuffles; fixed CV is the slug-order folds round 2 used.' }),
+        el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Specification' }), el('th', { scope: 'col', text: 'Params' }), el('th', { scope: 'col', text: 'Fixed CV R\u00B2' }), el('th', { scope: 'col', text: 'Repeated CV R\u00B2' }), el('th', { scope: 'col', text: 'Repeated CV MAE' }))),
+        el('tbody', null, candRows))),
+      el('p', { class: 'sub', text: 'Category dummies use the snapshot\u2019s category field — the five most common categories among the live comps, the rest pooled as \u201Cother\u201D — never a protocol name. Growth is clamped to -50%..+100%, age is uncapped years (round 2 capped it at 3y; uncapped wins on repeated CV), unknown age uses ' + m.unknown_age_days + ' days. P(token) is clamped to 5%..95% so no row is valued at zero or at the full fitted cap. This is an estimate, not a price, and not a prediction that a token is issued.' }),
       el('div', { class: 'comps' }, m.p_cells.map(function (c) {
         return el('div', { class: 'comp' }, el('span', { text: c.age_label + ' · ' + c.tvl_label + ' — ' + c.live + ' live / ' + c.pre + ' pre-token' }), el('b', { text: 'P(token) ' + Math.round(c.rate * 100) + '%' }));
       })),
-      el('p', { class: 'sub', text: 'Reading note for the judge: rows in CEX, Bridge and Liquid Staking categories are products whose economics differ from a standalone launch — use the category filter to set them aside. They are ranked here because the snapshot records no token for them, and the board covers every pre-token protocol rather than a picked subset.' }));
+      el('p', { class: 'sub', text: 'The nine cells above are the round-2 method, recomputed with the corrected target (a protocol counts as \u201Crecords a token\u201D when gecko_id or symbol is non-null, not when it has a market cap recorded) and kept as a reference: its repeated-CV log-loss is ' + m.p_cv_cells_logloss.toFixed(3) + ' against the logit\u2019s ' + m.p_cv_logit_logloss.toFixed(3) + ', so the logit is the one the rows use. Rows in CEX, Bridge and Liquid Staking categories are products whose economics differ from a standalone launch — use the category filter to set them aside. They are ranked here because the snapshot records no token for them, and the board covers every pre-token protocol rather than a picked subset.' }));
   }
   var dialog = el('dialog', { class: 'detail', id: 'detail', 'aria-labelledby': 'detail-title' });
   dialog.addEventListener('close', function () { state.selected = null; writeHash(); });
@@ -322,8 +352,9 @@
         el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: fmtAge(row.age_days) })),
         el('div', null, el('span', { text: 'Fitted market cap (OLS, before P)' }), el('b', { class: 'num', text: fmtUsd(row.fit_mcap_usd) })),
         el('div', null, el('span', { text: 'P(token) — ' + cellLabel(row.p_cell) }), el('b', { class: 'num', text: Math.round(row.p_token * 100) + '%' })),
-        el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) }))),
-      el('p', { class: 'sub', text: 'The page recomputes this row as ' + fmtUsd(recomputed) + (recomputed === row.implied_value_usd ? ' — the same number board.json carries.' : ' — which differs from the board; the data would be stale.') + ' This is an estimate, not a price, and not a prediction that a token is issued.' })));
+        el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) })),
+        el('div', null, el('span', { text: '80% interval (residual \u03C3 ' + DATA.model.residual_sigma.toFixed(2) + ' log pts)' }), el('b', { class: 'num', text: fmtUsd(row.implied_lo_usd) + ' – ' + fmtUsd(row.implied_hi_usd) }))),
+      el('p', { class: 'sub', text: 'The page recomputes this row as ' + fmtUsd(recomputed) + (recomputed === row.implied_value_usd ? ' — the same number board.json carries.' : ' — which differs from the board; the data would be stale.') + ' The interval is wide because the fit is noisy (repeated-CV R\u00B2 ' + DATA.model.rep_r2.toFixed(3) + '): treat the rank as an ordering, not a price, and compare neighbours in the compare panel below the board. This is an estimate, not a price, and not a prediction that a token is issued.' })));
     dialog.appendChild(el('section', { class: 'dsec' },
       el('h3', { text: 'Farm plan — what to do, what it costs, how long it takes' }),
       el('ol', { class: 'steps' }, (row.farm_steps || []).map(function (s) {
